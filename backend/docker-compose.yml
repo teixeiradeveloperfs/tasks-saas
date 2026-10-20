@@ -1,0 +1,34 @@
+# Banco de desenvolvimento do Flow.
+#
+# Mapeado na 5433 e não na 5432 porque esta máquina tem um PostgreSQL 18 instalado
+# nativamente ocupando a porta padrão. Os dois convivem sem conflito.
+#
+#   docker compose up -d      sobe o banco
+#   docker compose down       para, preservando os dados
+#   docker compose down -v    para e apaga os dados
+
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: flow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: flow
+      POSTGRES_PASSWORD: flow_dev_local
+      POSTGRES_DB: flow_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      # A partir da imagem 18 o mount vai em /var/lib/postgresql, não em .../data:
+      # o Postgres passa a guardar os dados num subdiretório por versão maior.
+      - flow-pgdata:/var/lib/postgresql
+      # Roda uma única vez, na criação do volume, para criar o banco de teste.
+      - ./docker/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flow -d flow_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  flow-pgdata:

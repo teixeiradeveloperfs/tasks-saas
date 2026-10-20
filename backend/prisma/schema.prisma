@@ -1,0 +1,890 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+// No Prisma 7 o `url` não existe mais aqui: o CLI lê de prisma.config.ts e o cliente
+// em runtime recebe um driver adapter no construtor (src/backend/db/client.ts).
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Identidade
+//
+// `Profile` do estado antigo vira `User`. `Member`, que era só nome e cor, vira
+// `WorkspaceMember` ligando um usuário real a um workspace. `WorkspaceMember.title`
+// guarda o cargo livre ("Owner", "Design"); permissões reais são um campo separado
+// que chega no sub-projeto 3.
+// ---------------------------------------------------------------------------
+
+model User {
+  id                              String    @id @default(uuid())
+  name                            String
+  email                           String    @unique
+  avatarColor                     String
+  avatarUrl                       String?   @db.Text
+  title                           String?
+  bio                             String?
+  notificationsReadAt             DateTime?
+  passwordHash                    String?
+  googleSubject                   String?   @unique
+  passwordUpdatedAt               DateTime?
+  failedLoginCount                Int       @default(0)
+  lockedUntil                     DateTime?
+  twoFactorSecretEncrypted        String?   @db.Text
+  twoFactorPendingSecretEncrypted String?   @db.Text
+  twoFactorEnabledAt              DateTime?
+  twoFactorLastUsedCounter        Int?
+  createdAt                       DateTime  @default(now())
+
+  sessions                 Session[]
+  sentInvites              WorkspaceInvite[]         @relation("InviteSender")
+  acceptedInvites          WorkspaceInvite[]         @relation("InviteRecipient")
+  memberships              WorkspaceMember[]
+  projectMemberships       ProjectMember[]
+  assignedTasks            Task[]                    @relation("TaskAssignee")
+  taskAssignments          TaskAssignment[]
+  comments                 Comment[]
+  timeEntries              TimeEntry[]
+  activities               Activity[]
+  attachments              Attachment[]
+  auditEvents              AuditEvent[]
+  pinnedWorkspaces         PinnedWorkspace[]
+  pinnedTasks              PinnedTask[]
+  favoriteRunbooks         RunbookFavorite[]
+  googleCalendarConnection GoogleCalendarConnection?
+  organizedMeetings        Meeting[]                 @relation("MeetingOrganizer")
+  githubConnections        GitHubConnection[]        @relation("GitHubConnector")
+  webPushSubscriptions     WebPushSubscription[]
+  pushPreference           PushPreference?
+  pushNotificationEvents   PushNotificationEvent[]
+  twoFactorRecoveryCodes   TwoFactorRecoveryCode[]
+  vaultEntriesCreated      VaultEntry[]              @relation("VaultEntryCreator")
+  vaultEntriesUpdated      VaultEntry[]              @relation("VaultEntryUpdater")
+  runbookSharesReceived    RunbookShare[]            @relation("RunbookShareRecipient")
+  runbookSharesCreated     RunbookShare[]            @relation("RunbookShareSender")
+  vaultSharesReceived      VaultEntryShare[]         @relation("VaultEntryShareRecipient")
+  vaultSharesCreated       VaultEntryShare[]         @relation("VaultEntryShareSender")
+}
+
+model Session {
+  id                  String    @id @default(uuid())
+  userId              String
+  tokenHash           String    @unique
+  expiresAt           DateTime
+  revokedAt           DateTime?
+  lastUsedAt          DateTime  @default(now())
+  userAgent           String?
+  ipAddress           String?
+  twoFactorVerifiedAt DateTime?
+  createdAt           DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model TwoFactorRecoveryCode {
+  id        String    @id @default(uuid())
+  userId    String
+  codeHash  String    @unique
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model WebPushSubscription {
+  id            String    @id @default(uuid())
+  userId        String
+  endpoint      String    @unique @db.Text
+  p256dh        String    @db.Text
+  auth          String    @db.Text
+  userAgent     String?   @db.Text
+  failureCount  Int       @default(0)
+  lastSuccessAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PushPreference {
+  userId             String   @id
+  enabled            Boolean  @default(true)
+  taskAssigned       Boolean  @default(true)
+  taskUpdates        Boolean  @default(true)
+  taskComments       Boolean  @default(true)
+  taskDueSoon        Boolean  @default(true)
+  meetings           Boolean  @default(true)
+  githubPullRequests Boolean  @default(true)
+  githubActions      Boolean  @default(true)
+  updatedAt          DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PushNotificationEvent {
+  id        String   @id @default(uuid())
+  userId    String
+  eventKey  String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, eventKey])
+  @@index([createdAt])
+}
+
+model WorkspaceMember {
+  id          String              @id @default(uuid())
+  workspaceId String
+  userId      String
+  title       String?
+  permission  WorkspacePermission @default(MEMBER)
+  createdAt   DateTime            @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId])
+}
+
+enum WorkspacePermission {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+// ---------------------------------------------------------------------------
+// Workspace
+//
+// Tudo que era vetor aninhado dentro do objeto Workspace vira tabela própria com
+// chave estrangeira e exclusão em cascata.
+// ---------------------------------------------------------------------------
+
+enum SprintStatus {
+  planned
+  active
+  closed
+}
+
+enum CustomFieldType {
+  text
+  number
+  select
+}
+
+model Workspace {
+  id          String   @id @default(uuid())
+  name        String
+  color       String
+  description String?
+  imageUrl    String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  members           WorkspaceMember[]
+  projects          Project[]
+  labels            Label[]
+  sprints           Sprint[]
+  customFields      CustomField[]
+  docs              Doc[]
+  whiteboards       Whiteboard[]
+  goals             Goal[]
+  automations       Automation[]
+  integrations      Integration[]
+  tasks             Task[]
+  pinnedBy          PinnedWorkspace[]
+  invites           WorkspaceInvite[]
+  auditEvents       AuditEvent[]
+  runbooks          Runbook[]
+  meetings          Meeting[]
+  githubConnections GitHubConnection[]
+  vaultEntries      VaultEntry[]
+}
+
+model VaultEntry {
+  id                String   @id @default(uuid())
+  workspaceId       String
+  name              String
+  description       String?
+  username          String?
+  url               String?
+  category          String
+  ciphertext        String   @db.Text
+  iv                String
+  authTag           String
+  encryptionVersion Int      @default(1)
+  createdById       String
+  updatedById       String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User              @relation("VaultEntryCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy User              @relation("VaultEntryUpdater", fields: [updatedById], references: [id], onDelete: Restrict)
+  shares    VaultEntryShare[]
+
+  @@index([workspaceId, updatedAt])
+}
+
+model VaultEntryShare {
+  id           String   @id @default(uuid())
+  vaultEntryId String
+  sharedWithId String
+  sharedById   String
+  createdAt    DateTime @default(now())
+
+  vaultEntry VaultEntry @relation(fields: [vaultEntryId], references: [id], onDelete: Cascade)
+  sharedWith User       @relation("VaultEntryShareRecipient", fields: [sharedWithId], references: [id], onDelete: Cascade)
+  sharedBy   User       @relation("VaultEntryShareSender", fields: [sharedById], references: [id], onDelete: Restrict)
+
+  @@unique([vaultEntryId, sharedWithId])
+  @@index([sharedWithId, createdAt])
+  @@index([sharedById])
+}
+
+model GitHubConnection {
+  id             String   @id @default(uuid())
+  workspaceId    String
+  installationId String
+  accountLogin   String
+  accountType    String
+  accountAvatar  String?  @db.Text
+  connectedById  String
+  connectedAt    DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connectedBy User      @relation("GitHubConnector", fields: [connectedById], references: [id], onDelete: Restrict)
+
+  @@unique([workspaceId, installationId])
+  @@index([workspaceId])
+  @@index([connectedById])
+  @@index([installationId])
+}
+
+model GoogleCalendarConnection {
+  id                 String   @id @default(uuid())
+  userId             String   @unique
+  googleEmail        String
+  refreshTokenCipher String   @db.Text
+  scopes             String
+  connectedAt        DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Meeting {
+  id             String    @id @default(uuid())
+  workspaceId    String
+  organizerId    String
+  title          String
+  description    String?   @db.Text
+  startAt        DateTime
+  endAt          DateTime
+  timezone       String
+  attendeeEmails String[]  @default([])
+  googleEventId  String?
+  calendarId     String?
+  meetUri        String?
+  cancelledAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  organizer User      @relation("MeetingOrganizer", fields: [organizerId], references: [id], onDelete: Cascade)
+
+  @@unique([organizerId, googleEventId])
+  @@index([workspaceId, startAt])
+  @@index([organizerId, startAt])
+}
+
+model Project {
+  id          String   @id @default(uuid())
+  workspaceId String
+  name        String
+  description String?
+  color       String
+  createdAt   DateTime @default(now())
+
+  workspace    Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  members      ProjectMember[]
+  tasks        Task[]
+  sprints      Sprint[]
+  docs         Doc[]
+  whiteboards  Whiteboard[]
+  goals        Goal[]
+  boardColumns BoardColumn[]
+  runbooks     Runbook[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, createdAt])
+}
+
+/// Concede a um membro do workspace acesso a um projeto específico.
+///
+/// A ausência de linha é o que nega o acesso, então OWNER e ADMIN não dependem
+/// dela: eles enxergam todo projeto do workspace por definição. Ainda assim a
+/// migration concede linhas a eles também, para que um rebaixamento futuro para
+/// MEMBER não apague de uma vez tudo o que a pessoa enxergava.
+model ProjectMember {
+  id        String   @id @default(uuid())
+  projectId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+model BoardColumn {
+  id        String     @id @default(uuid())
+  projectId String
+  name      String
+  status    TaskStatus
+  color     String
+  position  Int
+  createdAt DateTime   @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks   Task[]
+
+  @@unique([projectId, name])
+  @@index([projectId, position])
+}
+
+model WorkspaceInvite {
+  id            String              @id @default(uuid())
+  workspaceId   String
+  invitedById   String
+  email         String
+  name          String
+  role          String?
+  permission    WorkspacePermission @default(MEMBER)
+  tokenHash     String              @unique
+  expiresAt     DateTime
+  acceptedAt    DateTime?
+  invitedUserId String?
+  createdAt     DateTime            @default(now())
+  // Projetos que o convite libera. Lista escalar, e não tabela de junção, porque o
+  // convite vive sete dias: no aceite os ids são filtrados contra os projetos que
+  // ainda existem, o que dispensa integridade referencial aqui.
+  projectIds    String[]
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy   User      @relation("InviteSender", fields: [invitedById], references: [id])
+  invitedUser User?     @relation("InviteRecipient", fields: [invitedUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, email])
+  @@index([expiresAt])
+}
+
+model Label {
+  id          String @id @default(uuid())
+  workspaceId String
+  name        String
+  color       String
+
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  tasks     TaskLabel[]
+
+  @@unique([workspaceId, name])
+}
+
+model Sprint {
+  id          String       @id @default(uuid())
+  workspaceId String
+  projectId   String
+  name        String
+  goal        String?
+  startDate   DateTime?
+  endDate     DateTime?
+  status      SprintStatus @default(planned)
+  createdAt   DateTime     @default(now())
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks     Task[]
+  goals     GoalSprint[]
+
+  @@index([workspaceId])
+  @@index([projectId])
+}
+
+model CustomField {
+  id          String          @id @default(uuid())
+  workspaceId String
+  name        String
+  type        CustomFieldType
+  options     String[]
+
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  values    TaskFieldValue[]
+
+  @@index([workspaceId])
+}
+
+model Doc {
+  id          String   @id @default(uuid())
+  workspaceId String
+  projectId   String
+  title       String
+  body        String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([projectId])
+}
+
+/// Quadro de desenho livre (Excalidraw embutido). A cena é o JSON serializado do
+/// editor, criptografado em repouso como os documentos — por isso `String` e não
+/// `Json`: a coluna guarda o envelope `automa:enc:v1:`, não JSON consultável.
+model Whiteboard {
+  id          String   @id @default(uuid())
+  workspaceId String
+  projectId   String
+  title       String
+  scene       String   @default("") @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([projectId])
+}
+
+model Goal {
+  id          String    @id @default(uuid())
+  workspaceId String
+  projectId   String
+  name        String
+  description String?
+  dueDate     DateTime?
+  createdAt   DateTime  @default(now())
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks     GoalTask[]
+  sprints   GoalSprint[]
+
+  @@index([workspaceId])
+  @@index([projectId])
+}
+
+model GoalTask {
+  goalId String
+  taskId String
+
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@id([goalId, taskId])
+}
+
+model GoalSprint {
+  goalId   String
+  sprintId String
+
+  goal   Goal   @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  sprint Sprint @relation(fields: [sprintId], references: [id], onDelete: Cascade)
+
+  @@id([goalId, sprintId])
+}
+
+model Automation {
+  id          String   @id @default(uuid())
+  workspaceId String
+  name        String
+  enabled     Boolean  @default(true)
+  trigger     Json
+  action      Json
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model Integration {
+  id          String   @id @default(uuid())
+  workspaceId String
+  externalId  String
+  name        String
+  category    String
+  config      Json?
+  connectedAt DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, externalId])
+}
+
+enum RunbookRisk {
+  safe
+  caution
+  dangerous
+}
+
+model Runbook {
+  id          String   @id @default(uuid())
+  workspaceId String
+  projectId   String
+  title       String
+  description String?
+  category    String
+  environment String
+  tags        String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  steps     RunbookStep[]
+  variables RunbookVariable[]
+  favorites RunbookFavorite[]
+  shares    RunbookShare[]
+
+  @@index([workspaceId, updatedAt])
+  @@index([projectId, updatedAt])
+}
+
+model RunbookShare {
+  id           String   @id @default(uuid())
+  runbookId    String
+  sharedWithId String
+  sharedById   String
+  createdAt    DateTime @default(now())
+
+  runbook    Runbook @relation(fields: [runbookId], references: [id], onDelete: Cascade)
+  sharedWith User    @relation("RunbookShareRecipient", fields: [sharedWithId], references: [id], onDelete: Cascade)
+  sharedBy   User    @relation("RunbookShareSender", fields: [sharedById], references: [id], onDelete: Restrict)
+
+  @@unique([runbookId, sharedWithId])
+  @@index([sharedWithId, createdAt])
+  @@index([sharedById])
+}
+
+model RunbookStep {
+  id             String      @id @default(uuid())
+  runbookId      String
+  title          String
+  command        String      @db.Text
+  explanation    String?
+  expectedResult String?
+  risk           RunbookRisk @default(safe)
+  position       Int
+  checked        Boolean     @default(false)
+
+  runbook Runbook @relation(fields: [runbookId], references: [id], onDelete: Cascade)
+
+  @@index([runbookId, position])
+}
+
+model RunbookVariable {
+  id           String  @id @default(uuid())
+  runbookId    String
+  key          String
+  defaultValue String?
+  description  String?
+  position     Int
+
+  runbook Runbook @relation(fields: [runbookId], references: [id], onDelete: Cascade)
+
+  @@unique([runbookId, key])
+  @@index([runbookId, position])
+}
+
+model RunbookFavorite {
+  userId    String
+  runbookId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  runbook Runbook @relation(fields: [runbookId], references: [id], onDelete: Cascade)
+
+  @@id([userId, runbookId])
+  @@index([runbookId])
+}
+
+// ---------------------------------------------------------------------------
+// Tarefa
+//
+// Duas correções em relação ao estado antigo: as etiquetas viram relação por id
+// (eram um vetor de nomes, o que obrigava a varrer todas as tarefas ao renomear)
+// e o responsável fica só como chave estrangeira (havia o nome duplicado ao lado
+// do id). `Subtask.position` preserva a ordem que o vetor garantia implicitamente.
+// ---------------------------------------------------------------------------
+
+enum TaskStatus {
+  todo
+  in_progress
+  done
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+}
+
+enum ActivityKind {
+  created
+  status
+  priority
+  assignee
+  dueDate
+  sprint
+  subtask
+  time
+  comment
+  field
+  dependency
+  automation
+}
+
+model Task {
+  id              String       @id @default(uuid())
+  workspaceId     String
+  projectId       String
+  boardColumnId   String?
+  title           String
+  description     String?
+  status          TaskStatus   @default(todo)
+  priority        TaskPriority @default(medium)
+  assigneeId      String?
+  sprintId        String?
+  startDate       DateTime?
+  dueDate         DateTime?
+  estimateMinutes Int?
+  position        Int          @default(0)
+  createdAt       DateTime     @default(now())
+
+  workspace    Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project      Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  boardColumn  BoardColumn?            @relation(fields: [boardColumnId], references: [id], onDelete: SetNull)
+  assignee     User?                   @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  sprint       Sprint?                 @relation(fields: [sprintId], references: [id], onDelete: SetNull)
+  labels       TaskLabel[]
+  comments     Comment[]
+  subtasks     Subtask[]
+  timeEntries  TimeEntry[]
+  fieldValues  TaskFieldValue[]
+  activities   Activity[]
+  blockedBy    TaskBlocker[]           @relation("Blocked")
+  blocking     TaskBlocker[]           @relation("Blocker")
+  goals        GoalTask[]
+  pinnedBy     PinnedTask[]
+  attachments  Attachment[]
+  assignees    TaskAssignment[]
+  pullRequests GitHubPullRequestLink[]
+
+  @@index([workspaceId, status, position])
+  @@index([projectId, status, position])
+  @@index([boardColumnId, position])
+  @@index([status])
+  @@index([assigneeId])
+  @@index([sprintId])
+}
+
+model GitHubPullRequestLink {
+  id                 String   @id @default(uuid())
+  taskId             String
+  repositoryFullName String
+  pullRequestNumber  Int
+  title              String
+  url                String   @db.Text
+  state              String
+  draft              Boolean  @default(false)
+  merged             Boolean  @default(false)
+  headSha            String?
+  ciStatus           String   @default("unknown")
+  ciConclusion       String?
+  checkedAt          DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, repositoryFullName, pullRequestNumber], map: "GitHubPullRequestLink_task_repo_pr_key")
+  @@index([repositoryFullName, pullRequestNumber])
+  @@index([repositoryFullName, headSha])
+}
+
+model TaskAssignment {
+  taskId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, userId])
+  @@index([userId])
+}
+
+model Attachment {
+  id         String   @id @default(uuid())
+  taskId     String
+  uploaderId String
+  name       String
+  mimeType   String
+  size       Int
+  data       Bytes
+  createdAt  DateTime @default(now())
+
+  task     Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploader User @relation(fields: [uploaderId], references: [id], onDelete: Restrict)
+
+  @@index([taskId, createdAt])
+}
+
+model AuditEvent {
+  id          String   @id @default(uuid())
+  workspaceId String
+  actorId     String
+  action      String
+  entityType  String
+  entityId    String?
+  summary     String
+  before      Json?
+  after       Json?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor     User      @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model TaskLabel {
+  taskId  String
+  labelId String
+
+  task  Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  label Label @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, labelId])
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  taskId    String
+  authorId  String
+  text      String
+  createdAt DateTime @default(now())
+
+  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+}
+
+model Subtask {
+  id       String  @id @default(uuid())
+  taskId   String
+  title    String
+  done     Boolean @default(false)
+  position Int
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+}
+
+model TimeEntry {
+  id        String   @id @default(uuid())
+  taskId    String
+  authorId  String
+  minutes   Int
+  note      String?
+  createdAt DateTime @default(now())
+
+  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+}
+
+model TaskFieldValue {
+  taskId      String
+  fieldId     String
+  valueText   String?
+  valueNumber Float?
+
+  task  Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  field CustomField @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, fieldId])
+}
+
+model Activity {
+  id        String       @id @default(uuid())
+  taskId    String
+  authorId  String
+  kind      ActivityKind
+  text      String
+  createdAt DateTime     @default(now())
+
+  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+}
+
+model TaskBlocker {
+  taskId          String
+  blockedByTaskId String
+
+  task      Task @relation("Blocked", fields: [taskId], references: [id], onDelete: Cascade)
+  blockedBy Task @relation("Blocker", fields: [blockedByTaskId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, blockedByTaskId])
+}
+
+// ---------------------------------------------------------------------------
+// Perfil
+//
+// Os favoritos eram vetores dentro do perfil. Como junção, a exclusão em cascata
+// limpa sozinha quando o alvo some.
+// ---------------------------------------------------------------------------
+
+model PinnedWorkspace {
+  userId      String
+  workspaceId String
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([userId, workspaceId])
+}
+
+model PinnedTask {
+  userId String
+  taskId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@id([userId, taskId])
+}

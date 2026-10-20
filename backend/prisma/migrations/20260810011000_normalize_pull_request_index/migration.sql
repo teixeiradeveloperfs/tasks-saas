@@ -1,0 +1,2 @@
+ALTER INDEX "GitHubPullRequestLink_taskId_repositoryFullName_pullRequestNumb"
+RENAME TO "GitHubPullRequestLink_task_repo_pr_key";

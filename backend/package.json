@@ -1,0 +1,49 @@
+{
+  "name": "@task-flow/backend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "prisma generate && tsc -p tsconfig.json",
+    "start": "NODE_ENV=production tsx src/server.ts",
+    "env:prepare": "node scripts/prepare-env-files.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:test": "set -a && . ./.env && set +a && DATABASE_URL=\"$TEST_DATABASE_URL\" prisma migrate deploy",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio",
+    "db:generate": "prisma generate",
+    "security:migrate-sensitive-data": "tsx scripts/migrate-sensitive-content.ts"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^10.0.2",
+    "@fastify/helmet": "^13.1.0",
+    "@fastify/static": "^10.1.3",
+    "@node-rs/argon2": "^2.0.2",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
+    "@task-flow/shared": "workspace:*",
+    "@upstash/redis": "^1.38.2",
+    "dotenv": "^17.4.2",
+    "fastify": "^5.2.0",
+    "google-auth-library": "^11.0.0",
+    "openai": "^7.4.0",
+    "qrcode": "^1.5.4",
+    "redis": "^6.2.0",
+    "web-push": "^3.6.7",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.16.5",
+    "@types/qrcode": "^1.5.6",
+    "@types/web-push": "^3.6.4",
+    "prisma": "^7.9.1",
+    "tsx": "^4.23.5",
+    "typescript": "^5.8.3",
+    "vite-tsconfig-paths": "^6.0.2",
+    "vitest": "^4.1.10"
+  }
+}

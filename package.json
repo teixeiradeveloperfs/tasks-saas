@@ -1,0 +1,46 @@
+{
+  "name": "task-flow",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "backend",
+    "frontend",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c blue,green \"bun run --cwd backend dev\" \"bun run --cwd frontend dev\"",
+    "build": "bun run --cwd backend build && bun run --cwd frontend build",
+    "build:production": "NODE_ENV=production bun run build",
+    "pm2:start": "pm2 start ecosystem.config.cjs --env production",
+    "pm2:reload": "pm2 reload ecosystem.config.cjs --env production --update-env",
+    "pm2:stop": "pm2 stop ecosystem.config.cjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "test": "bun run --cwd backend test && bun run --cwd frontend test",
+    "test:watch": "bun run --cwd backend test:watch",
+    "db:migrate": "bun run --cwd backend db:migrate",
+    "db:migrate:test": "bun run --cwd backend db:migrate:test",
+    "db:seed": "bun run --cwd backend db:seed",
+    "db:studio": "bun run --cwd backend db:studio",
+    "db:generate": "bun run --cwd backend db:generate",
+    "security:migrate-sensitive-data": "bun run --cwd backend security:migrate-sensitive-data"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.9",
+    "nanoid": "3.3.18",
+    "postcss": "8.5.26"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "concurrently": "^9.2.4",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.6",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.26",
+    "globals": "^15.15.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.67.0"
+  }
+}

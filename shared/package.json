@@ -1,0 +1,21 @@
+{
+  "name": "@task-flow/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./domain/models": "./domain/models.ts",
+    "./domain/presentation": "./domain/presentation.ts",
+    "./domain/auth-contracts": "./domain/auth-contracts.ts",
+    "./domain/task-contracts": "./domain/task-contracts.ts",
+    "./domain/ai-contracts": "./domain/ai-contracts.ts",
+    "./domain/meeting-contracts": "./domain/meeting-contracts.ts",
+    "./domain/github-contracts": "./domain/github-contracts.ts",
+    "./domain/push-contracts": "./domain/push-contracts.ts",
+    "./domain/security-contracts": "./domain/security-contracts.ts",
+    "./domain/workspace-contracts": "./domain/workspace-contracts.ts"
+  },
+  "dependencies": {
+    "zod": "^3.24.2"
+  }
+}

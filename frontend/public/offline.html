@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0086f2" />
+    <title>Taskora — Offline</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: Inter, system-ui, sans-serif;
+      }
+      body {
+        min-height: 100dvh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        background: Canvas;
+        color: CanvasText;
+      }
+      main {
+        width: min(88vw, 420px);
+        text-align: center;
+      }
+      img {
+        width: 72px;
+        height: 72px;
+      }
+      h1 {
+        margin: 20px 0 8px;
+        font-size: 1.5rem;
+      }
+      p {
+        margin: 0;
+        opacity: 0.7;
+        line-height: 1.6;
+      }
+      button {
+        margin-top: 24px;
+        min-height: 44px;
+        border: 0;
+        border-radius: 10px;
+        padding: 0 20px;
+        color: white;
+        background: #0086f2;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="/brand/app-icon-192.png" alt="" />
+      <h1>Você está offline</h1>
+      <p>
+        Confira sua conexão e tente novamente. As telas visitadas recentemente podem continuar
+        disponíveis.
+      </p>
+      <button onclick="location.reload()">Tentar novamente</button>
+    </main>
+  </body>
+</html>
